@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/urfave/cli/v2"
-	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,15 +14,30 @@ import (
 	"syscall"
 )
 
+func netIPv4() []string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	var ipv4 []string
+	for _, addr := range addrs {
+		ipNet, isIpNet := addr.(*net.IPNet)
+		if isIpNet && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+			ipv4 = append(ipv4, ipNet.IP.String())
+		}
+	}
+	return ipv4
+}
+
 func main() {
 	app := &cli.App{
 		Name:  "readfile",
 		Usage: "reading file over the web",
 		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:  "addr",
-				Usage: "web server listen address",
-				Value: "localhost:8080",
+			&cli.UintFlag{
+				Name:  "port",
+				Usage: "web server port",
+				Value: 8080,
 			},
 			&cli.BoolFlag{
 				Name:  "debug",
@@ -43,16 +58,13 @@ func main() {
 				return fmt.Errorf("filepath: %s, err: file is a directory\n", filepath)
 			}
 
-			data, err := ioutil.ReadFile(filepath)
-			if err != nil {
-				return fmt.Errorf("filepath: %s, err:%s\n", filepath, err.Error())
-			}
 			if !cliCtx.Bool("debug") {
 				gin.SetMode(gin.ReleaseMode)
 			}
 			e := gin.Default()
+			port := cliCtx.Uint("port")
 			srv := &http.Server{
-				Addr:    cliCtx.String("addr"),
+				Addr:    fmt.Sprintf(":%d", port),
 				Handler: e,
 			}
 			go func() {
@@ -65,11 +77,14 @@ func main() {
 
 			fileURI := "/file/" + url.QueryEscape(ff.Name())
 			e.GET(fileURI, func(ctx *gin.Context) {
-				ctx.Data(http.StatusOK, "application/octet-stream", data)
+				ctx.File(filepath)
 			})
 
 			log.Printf("File: %s\n", filepath)
 			log.Printf("FileURI: %s\n", fileURI)
+			for idx, host := range netIPv4() {
+				log.Printf("FileURL(%d): http://%s:%d%s \n", idx, host, port, fileURI)
+			}
 			log.Printf("Listening and serving HTTP on %s\n", srv.Addr)
 
 			return srv.ListenAndServe()
